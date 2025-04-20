@@ -1,0 +1,13 @@
+chroma-hnswlib==0.7.6
+chromadb==0.6.3
+langchain==0.3.23
+langchain-chroma==0.2.3
+langchain-community==0.3.21
+langchain-core==0.3.54
+langchain-experimental==0.3.4
+langchain-google-genai==2.1.2
+langgraph==0.3.30
+pylatexenc==2.10
+PyYAML==6.0.2
+sentence-transformers==4.0.2
+streamlit==1.44.1
