@@ -9,7 +9,7 @@ from langchain_core.output_parsers import StrOutputParser, JsonOutputParser
 from langchain.schema import Document
 from langgraph.graph import StateGraph, END
 from langchain_core.runnables import RunnableLambda
-from IPython.display import Image, display
+from IPython.display import Image, display, Markdown
 from typing import List
 from typing_extensions import TypedDict
 import os
@@ -20,7 +20,7 @@ import tempfile
 from pathlib import Path
 from datetime import datetime
 import time
-import random
+import uuid
 
 # Initialize session state
 if 'initialized' not in st.session_state:
@@ -30,6 +30,7 @@ if 'initialized' not in st.session_state:
 class GraphState(TypedDict):
     question: str
     raw_solution: str
+    previous_solution: str
     generation: str
     documents: List[Document]
     web_search_needed: str
@@ -86,7 +87,7 @@ def initialize_components():
     """Initialize all components and store in session state"""
     if not st.session_state.initialized:
         st.session_state.embedding_model = HuggingFaceEmbeddings(
-                                            model_name="BAAI/bge-small-en",
+                                            model_name="BAAI/bge-small-en-v1.5",
                                             model_kwargs={"device": "cpu"},
                                             encode_kwargs={"normalize_embeddings": True}
                                         )
@@ -100,7 +101,6 @@ def initialize_components():
                                     temperature=0,
                                 )
         st.session_state.tv_search = TavilySearchResults(max_results=3, search_depth='advanced')
-
         if os.path.exists("./math_db"):
             st.session_state.chroma_db = Chroma(
                 embedding_function=st.session_state.embedding_model,
@@ -113,7 +113,6 @@ def initialize_components():
             st.write("⚠️ No existing database found. Need to create an index.")
             
         st.session_state.initialized = True
-
 
 def configure_retriever():
     """Configure the document retriever with the current Chroma DB"""
@@ -171,32 +170,25 @@ def document_grader(state):
         
         grader_prompt = ChatPromptTemplate.from_template("""
         You are a document relevance grader.
-
         Question:
         {question}
-
         Documents:
         {documents}
-
         Your task is to:
         1. Identify which documents are relevant to the question.
         2. Determine if at least one of the relevant documents is sufficient to answer the question.
         3. Output a JSON with:
         - "relevant_documents": [list of indices of relevant docs],
         - "is_sufficient": true/false
-
         Return your output as JSON only.
         """)
-
         parser = JsonOutputParser()
-
         def grade_documents(inputs):
             question = inputs["question"]
             documents = [doc.page_content for doc in inputs["documents"]]
             return {"question": question, "documents": documents}
             
         document_grader_chain = RunnableLambda(grade_documents) | grader_prompt | st.session_state.eval_llm | parser
-
         result = document_grader_chain.invoke({"question": state["question"], "documents": state["documents"]})
         relevant_indices = result.get("relevant_documents", [])
         is_sufficient = result.get("is_sufficient", False)
@@ -256,7 +248,7 @@ def assess_web_results(state):
              "Question: {question}\n\nWeb Content:\n{web_results}")
         ])
         
-        assessment_chain = assess_prompt | st.session_state.llm | StrOutputParser()
+        assessment_chain = assess_prompt | st.session_state.eval_llm | StrOutputParser()
         result = assessment_chain.invoke({
             "question": state["question"],
             "web_results": state["web_results"]
@@ -274,13 +266,14 @@ def assess_web_results(state):
 
 def generate(state):
     with st.status("🧮 Generating Solution..."):
-        # If we already have a solution _and_ no new feedback, skip
+        # If we already have a solution *and* no new feedback, skip
         if state.get("raw_solution") and not state.get("human_feedback"):
             return state
-
         docs = "\n\n".join(d.page_content for d in state["documents"])
         context = docs + "\n\n" + state["web_results"]
-        fb = state.get("human_feedback", "")
+        feedback = state.get("human_feedback", "")
+        prev_solution = state.get("raw_solution", "")
+
         prompt = ChatPromptTemplate.from_messages([
             ("system", 
             "You are a expert mathematics professor helping students understand the math problems clearly.\n\n"
@@ -289,14 +282,26 @@ def generate(state):
             "2. Use the provided context to identify key formulas, definitions, or values.\n"
             "3. Solve the question step-by-step using clear reasoning and intermediate steps.\n"
             "4. Show all formulas and substitutions, and explain your logic.\n"
-            "5. End with a final boxed answer like: \\boxed{{your_final_answer}}.\n\n"
-            "Do not skip steps, and ensure clarity for someone learning math."),
-
-            ("human", f"Human Feedback: {fb}\nContext:\n{context}\n\nQuestion:\n{state['question']}")
+            "5. End with a final boxed answer like: \\boxed{{your_final_answer}}.\n"
+            "6. If human feedback and previous answer are provided, follow the human feedback carefully to improve or correct your previous answer.\n\n"
+            "Note: Do not skip steps, and ensure clarity for students learning maths."),
+            
+            ("human", 
+            """Previous Response:\n{previous_answer_block}\n\n
+            Human Feedback:\n{feedback_block}\n\n
+            Context:\n{context}\n\n
+            Question:\n{question}""")
         ])
+
+        # Add feedback & previous answer if any
+        feedback_block = f"Human Feedback: {feedback}" if feedback else ""
+        previous_answer_block = f"Previous Answer:\n{prev_solution}\n\n" if prev_solution else ""
+
         chain = prompt | st.session_state.llm | StrOutputParser()
-        raw = chain.invoke({"question": state["question"], "context": context})
-        return {**state, "raw_solution": raw, "generation": ""}
+        raw = chain.invoke({"context": context, "question": state["question"], 
+                            "feedback_block": feedback_block, 
+                            "previous_answer_block": previous_answer_block})
+        return {**state, "previous_solution": prev_solution, "raw_solution": raw, "generation": "", "human_feedback": ""}
 
 # Output Guardrails
 def output_guardrails(state):
@@ -304,7 +309,6 @@ def output_guardrails(state):
         raw = state.get("raw_solution", "")
         if not raw:
             return state
-
         check_prompt = ChatPromptTemplate.from_messages([
             ("system", 
             "You are a mathematics expert responsible for validating the accuracy and completeness of step-by-step solutions.\n\n"
@@ -316,13 +320,11 @@ def output_guardrails(state):
             ("human", 
             "Question:\n{question}\n\nProposed Solution:\n{raw_solution}")
         ])
-
         chain = check_prompt | st.session_state.eval_llm | StrOutputParser()
         validated = chain.invoke({
             "question": state["question"],
             "raw_solution": raw
         })
-
         # Place the final solution into 'generation'
         return {**state, "generation": validated}
     
@@ -330,10 +332,8 @@ def output_guardrails(state):
 def save_feedback(question, solution, feedback, rating=None):
     feedback_file = Path("./feedback_data/feedback_log.json")
     feedback_file.parent.mkdir(exist_ok=True, parents=True)
-
     # Use readable datetime format
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
     entry = {
         "timestamp": timestamp,
         "question": question,
@@ -341,7 +341,6 @@ def save_feedback(question, solution, feedback, rating=None):
         "feedback": feedback,
         "rating": rating
     }
-
     # Load existing data if file exists
     if feedback_file.exists():
         with open(feedback_file, "r") as f:
@@ -351,34 +350,58 @@ def save_feedback(question, solution, feedback, rating=None):
                 feedback_data = []
     else:
         feedback_data = []
-
     # Append the new entry
     feedback_data.append(entry)
-
     # Save back to the file
     with open(feedback_file, "w") as f:
         json.dump(feedback_data, f, indent=2)
     
     st.success(f"Feedback saved!")
 
-def human_in_the_loop(state):
-    # Initialize session state variables if not present
+
+def initialize_feedback_session():
+    """Initialize feedback session with unique identifiers"""
+    if "feedback_session_id" not in st.session_state:
+        st.session_state.feedback_session_id = str(uuid.uuid4())
     if "feedback_iterations" not in st.session_state:
         st.session_state.feedback_iterations = 0
     if "phase" not in st.session_state:
         st.session_state.phase = "rating"
     if "processing_feedback" not in st.session_state:
         st.session_state.processing_feedback = False
+    # Add this new flag to prevent multiple calls
+    if "initial_display_done" not in st.session_state:
+        st.session_state.initial_display_done = False
+
+def reset_feedback_state():
+    """Reset all feedback-related session state variables"""
+    st.session_state.phase = "rating"
+    st.session_state.feedback_iterations = 0
+    st.session_state.processing_feedback = False
+    st.session_state.current_state = None
+    st.session_state.initial_display_done = False  # Reset this flag too
+    # Generate new session ID for completely fresh start
+    st.session_state.feedback_session_id = str(uuid.uuid4())
+    # Clear any stored temporary states
+    if "temp_state" in st.session_state:
+        del st.session_state.temp_state
+    if "current_rating" in st.session_state:
+        del st.session_state.current_rating
+    if "current_feedback" in st.session_state:
+        del st.session_state.current_feedback
+
+def human_in_the_loop(state):
+    # Initialize feedback session
+    initialize_feedback_session()
     
     # Get current iteration and phase
     it = st.session_state.get("feedback_iterations", 0)
     phase = st.session_state.get("phase", "rating")
+    session_id = st.session_state.get("feedback_session_id", "default")
     
-    # Create truly unique keys for widgets
-    if "widget_id" not in st.session_state:
-        st.session_state.widget_id = str(random.randint(10000, 99999))
-    wid = st.session_state.widget_id
-    suf = f"_iter{it}_{wid}"
+    # Create unique keys based on session ID and iteration
+    def get_unique_key(base_key):
+        return f"{base_key}_{session_id}_iter{it}_{phase}"  # Added phase to make it more unique
     
     # Display solution information
     st.subheader("🔎 Generated Solution")
@@ -391,7 +414,6 @@ def human_in_the_loop(state):
     # Skip feedback process for non-math questions
     low = state["generation"].lower() if state["generation"] else ""
     if "only help with math" in low or "couldn't find any reliable information" in low:
-        st.session_state.submitted = False
         return {**state, "human_feedback": ""}
     
     # Maximum iterations check
@@ -403,10 +425,11 @@ def human_in_the_loop(state):
     
     # STEP 1: Rating phase
     if phase == "rating":
-        rating = st.slider("⭐ Rate this solution:", 1, 5, 3, key=f"rating{suf}")
-        if st.button("Submit Rating", key=f"submit{suf}"):
+        rating = st.slider("⭐ Rate this solution:", 1, 5, 3, key=get_unique_key("rating"))
+        if st.button("Submit Rating", key=get_unique_key("submit_rating")):
             st.session_state.current_rating = rating
             st.session_state.phase = "approval"
+            st.session_state.initial_display_done = True
             st.rerun()
         return state
     
@@ -415,23 +438,23 @@ def human_in_the_loop(state):
         st.write(f"Rating: {st.session_state.current_rating} ⭐")
         c1, c2 = st.columns(2)
         with c1:
-            if st.button("✅ Accept", key=f"accept{suf}"):
+            if st.button("✅ Accept", key=get_unique_key("accept")):
                 save_feedback(
                     state["question"], state["generation"], "", rating=st.session_state.current_rating
                 )
                 st.success("Solution accepted!")
                 reset_feedback_state()
-                return {**state, "human_feedback": ""}
+                return {**state, "human_feedback": "", "previous_solution": state["raw_solution"],}
         with c2:
-            if st.button("❌ Request Changes", key=f"request{suf}"):
+            if st.button("❌ Request Changes", key=get_unique_key("request_changes")):
                 st.session_state.phase = "feedback"
                 st.rerun()
         return state
     
     # STEP 3: Feedback and regeneration phase
     if phase == "feedback":
-        fb = st.text_area("✏️ Enter your feedback:", key=f"fb{suf}")
-        submit_fb = st.button("Submit Feedback", key=f"fb_submit{suf}")
+        fb = st.text_area("✏️ Enter your feedback:", key=get_unique_key("feedback_text"))
+        submit_fb = st.button("Submit Feedback", key=get_unique_key("submit_feedback"))
         
         if submit_fb and fb.strip():
             # Set processing flag to prevent multiple submissions
@@ -451,6 +474,7 @@ def human_in_the_loop(state):
             new_state = GraphState(
                 question=state["question"],
                 human_feedback=fb,
+                previous_solution=state["raw_solution"],
                 raw_solution="",
                 generation="",
                 documents=state.get("documents", []),
@@ -460,42 +484,30 @@ def human_in_the_loop(state):
                 should_end=False
             )
             
-            # Store this temporary state to show a placeholder while processing
-            st.session_state.temp_state = new_state
-            
             try:
                 with st.spinner("🧮 Generating new solution with your feedback..."):
                     # Resume graph from 'generate'
                     math_agent = build_math_agent()
-                    new_state = math_agent.invoke(new_state)
+                    # Run the regeneration process
+                    new_state = generate(new_state)
+                    new_state = output_guardrails(new_state)
                 
-                # Increment feedback iteration
+                # Increment feedback iteration and reset phase
                 st.session_state.feedback_iterations += 1
                 st.session_state.phase = "rating"
-                st.session_state.widget_id = str(random.randint(10000, 99999))
                 st.session_state.processing_feedback = False
                 
                 # Update the current state with the new solution
                 st.session_state.current_state = new_state
-                return new_state
+                st.rerun()
+                
             except Exception as e:
                 st.error(f"Error regenerating solution: {str(e)}")
                 st.session_state.processing_feedback = False
-                
-                # If error occurs, show the previous state
                 return state
         
         # If user hasn't submitted feedback yet, show the current state
         return state
-
-def reset_feedback_state():
-    """Reset all feedback-related session state variables"""
-    st.session_state.phase = "rating"
-    st.session_state.feedback_iterations = 0
-    st.session_state.submitted = False
-    st.session_state.processing_feedback = False
-    st.session_state.current_state = None
-    st.session_state.widget_id = str(random.randint(10000, 99999))
 
 def stop(state):
     """End the workflow"""
@@ -504,7 +516,6 @@ def stop(state):
 def build_math_agent():
     """Build the MATH Agent workflow"""
     agent = StateGraph(GraphState)
-
     agent.add_node("input_guardrails", input_guardrails)
     agent.add_node("retrieve", retrieve)
     agent.add_node("grade", document_grader)
@@ -515,9 +526,7 @@ def build_math_agent():
     agent.add_node("human_review", human_in_the_loop)
     agent.add_node("stop", stop)
     agent.add_edge("stop", END)
-
     agent.set_entry_point("input_guardrails")
-
     agent.add_conditional_edges(
         "input_guardrails",
         lambda state: "end" if state.get("should_end", False) else "continue",
@@ -526,7 +535,6 @@ def build_math_agent():
             "continue": "retrieve"
         }
     )
-
     agent.add_edge("retrieve", "grade")
     agent.add_conditional_edges(
         "grade", 
@@ -547,7 +555,6 @@ def build_math_agent():
     )
     agent.add_edge("generate", "output_guardrails")
     agent.add_edge("output_guardrails", "human_review")
-
     agent.add_conditional_edges(
         "human_review",
         lambda state: "regenerate" if state["human_feedback"] else "complete",
@@ -556,11 +563,9 @@ def build_math_agent():
             "complete": END
         }
     )
-
     return agent.compile()
 
 def main():
-    
     st.set_page_config(page_title="MATH Agent", page_icon="🧮", layout="wide")
     st.title("🧮 MATH Agent: Advanced Mathematical Problem Solver")
     st.markdown("""This application uses AI to solve mathematical problems step-by-step, drawing on both a knowledge base and web search when needed.""")
@@ -584,8 +589,6 @@ def main():
             st.session_state.current_state = None
         if "is_generating" not in st.session_state:
             st.session_state.is_generating = False
-        if "widget_id" not in st.session_state:
-            st.session_state.widget_id = str(random.randint(10000, 99999))
         
         # Question submission form
         with st.form(key="query_form"):
@@ -615,25 +618,24 @@ def main():
             
             st.session_state.current_state = result
             st.session_state.is_generating = False
+            st.session_state.initial_display_done = False  # Reset this flag for the new question
+            st.rerun()  # Force a rerun to properly display the feedback interface
         
         # Process and display current solution with feedback loop
-        if st.session_state.current_state:
+        if st.session_state.current_state and not st.session_state.get("is_generating", False):
             # Show processing indicator if feedback is being processed
             if st.session_state.get("processing_feedback", False):
                 st.info("Processing your feedback and generating a new solution...")
-                if st.session_state.get("temp_state"):
-                    # Show a placeholder with the previous solution and the feedback
-                    temp_state = st.session_state.temp_state
-                    st.subheader("Previous Solution")
-                    st.markdown(f"**Question:** {temp_state['question']}")
-                    st.markdown(st.session_state.get("last_generation", ""))
-                    st.write("---")
-                    st.subheader("Your Feedback")
-                    st.write(st.session_state.get("current_feedback", ""))
             else:
                 # Normal flow - show the solution with feedback options
-                final_state = human_in_the_loop(st.session_state.current_state)
-                st.session_state.current_state = final_state
+                # Only call human_in_the_loop if we're not in the initial processing phase
+                if st.session_state.get("initial_display_done", False) or st.session_state.get("phase", "rating") != "rating":
+                    final_state = human_in_the_loop(st.session_state.current_state)
+                    st.session_state.current_state = final_state
+                else:
+                    # First time display - just show the interface without processing
+                    human_in_the_loop(st.session_state.current_state)
+                    st.session_state.initial_display_done = True
     
     # Feedback records tab
     with tab2:
