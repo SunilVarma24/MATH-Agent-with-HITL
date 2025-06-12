@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.ipynb_checkpoints/
+venv/
+notebooks/
+.git/
+.gitignore
+*.ipynb
+.env
+README.md
+LICENSE
+Dockerfile

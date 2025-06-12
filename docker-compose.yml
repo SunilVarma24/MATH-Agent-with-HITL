@@ -1,0 +1,13 @@
+version: "3.8"
+
+services:
+  math-agent:
+    build: .
+    ports:
+      - "8501:8501"
+    env_file:
+      - .env
+    volumes:
+      - ./vectorstore/math_db:/app/vectorstore/math_db
+      - ./feedback_data:/app/feedback_data
+    command: streamlit run app.py

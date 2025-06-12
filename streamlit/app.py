@@ -15,12 +15,18 @@ from typing_extensions import TypedDict
 import os
 import json
 from pylatexenc.latex2text import LatexNodes2Text
+from dotenv import load_dotenv
 import re
 import tempfile
 from pathlib import Path
 from datetime import datetime
 import time
 import uuid
+
+load_dotenv()
+
+google_api_key = os.getenv("GOOGLE_API_KEY")
+tavily_api_key = os.getenv("TAVILY_API_KEY")
 
 # Initialize session state
 if 'initialized' not in st.session_state:
@@ -101,10 +107,17 @@ def initialize_components():
                                     temperature=0,
                                 )
         st.session_state.tv_search = TavilySearchResults(max_results=3, search_depth='advanced')
-        if os.path.exists("./math_db"):
+
+        # Get the absolute path to the directory containing this file
+        BASE_DIR = Path(__file__).resolve().parent
+
+        # Path to the folder that contains chroma.sqlite3
+        CHROMA_DIR = BASE_DIR.parent / 'vectorstore' / 'math_db'
+
+        if CHROMA_DIR.exists():
             st.session_state.chroma_db = Chroma(
                 embedding_function=st.session_state.embedding_model,
-                persist_directory="./math_db",
+                persist_directory=str(CHROMA_DIR),
                 collection_name="math_knowledge"
             )
             st.write("✅ Chroma index loaded from disk.")
@@ -330,7 +343,12 @@ def output_guardrails(state):
     
 # Save feedback function
 def save_feedback(question, solution, feedback, rating=None):
-    feedback_file = Path("./feedback_data/feedback_log.json")
+    # Get base directory
+    BASE_DIR = Path(__file__).resolve().parent
+
+    # Construct full path to feedback_data/feedback_log.json
+    feedback_file = BASE_DIR.parent / "feedback_data" / "feedback_log.json"
+
     feedback_file.parent.mkdir(exist_ok=True, parents=True)
     # Use readable datetime format
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
