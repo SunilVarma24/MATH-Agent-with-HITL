@@ -96,11 +96,11 @@ To deploy the Agentic RAG: Math Agent, you can use Docker to containerize the ap
 
 2. **Run the Docker Container**
    ```bash
-   docker run -p 8000:8000 math-agent
+   docker run -p 8000:8000 -p 8501:8501 math-agent
    ```
 
 3. **Access the Application**
-   Open your browser and go to [http://127.0.0.1:8000](http://127.0.0.1:8000) to access the API, and [http://127.0.0.1:8501](http://127.0.0.1:8501) for the Streamlit UI.
+   Open your browser and go to [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs) to access the API documentation, and [http://127.0.0.1:8501](http://127.0.0.1:8501) for the Streamlit UI.
 
 ## License
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
