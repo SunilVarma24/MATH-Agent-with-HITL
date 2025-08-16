@@ -14,8 +14,13 @@ RUN pip install -r requirements.txt
 # Now copy the rest of the app
 COPY . .
 
-# Expose port for Streamlit
+# Expose ports for FastAPI and Streamlit
+EXPOSE 8000
 EXPOSE 8501
 
-# Run the Streamlit app
-CMD ["streamlit", "run", "streamlit/app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+# Add a startup script
+COPY start.sh /start.sh
+RUN chmod +x /start.sh
+
+# Run the FastAPI app and Streamlit app
+CMD ["/start.sh"]

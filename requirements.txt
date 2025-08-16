@@ -13,3 +13,6 @@ sentence-transformers==4.0.2
 streamlit==1.44.1
 python-dotenv==1.1.0
 ipython==9.1.0
+fastapi==0.115.12
+uvicorn==0.34.1
+tavily-python==0.7.10

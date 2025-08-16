@@ -10,12 +10,17 @@ The **Agentic RAG: Math Agent with Feedback based Learning** is designed to simu
 
 The system guarantees **safe, accurate, and domain-specific reasoning**, particularly for mathematics.
 
+## Features
+- **Interactive Learning**: Engages students with questions and hints.
+- **Step-by-Step Solutions**: Breaks down complex problems into manageable steps.
+- **Web Search Capabilities**: Retrieves up-to-date information from the web.
+- **Feedback Loop**: Learns from user interactions to improve future responses.
 
 ## How It Works  
 
 ### 1. AI Gateway with Guardrails  
 - **Input Guardrails**: A Gemini 2.0 Flash model classifies whether the input is **math-related**. If not, it politely rejects the query.  
-- **Output Guardrails**: Gemini 1.5 Pro validates that the final answer is complete, logically correct, and step-by-step. If not, it regenerates the output.
+- **Output Guardrails**: Gemini 2.5 Flash validates that the final answer is complete, logically correct, and step-by-step. If not, it regenerates the output.
 
 ### 2. Knowledge Base Creation  
 - A dataset of **12,000 math questions** across topics (Algebra, Geometry, Number Theory, etc.) is used.  
@@ -24,7 +29,7 @@ The system guarantees **safe, accurate, and domain-specific reasoning**, particu
 
 ### 3. Retrieval and Grading Pipeline  
 - A **similarity-based retriever** fetches highly relevant documents.  
-- A **document grader** (Gemini 1.5 Pro) evaluates if the retrieved context is:  
+- A **document grader** (Gemini 2.5 Flash) evaluates if the retrieved context is:  
   - Relevant to the query  
   - Sufficient to generate a correct response  
 - If context is insufficient → triggers **Web Search**.
@@ -38,7 +43,7 @@ The system guarantees **safe, accurate, and domain-specific reasoning**, particu
 - Uses all available and approved context to generate a **step-by-step explanation** using Gemini 2.0 Flash.
 
 ### 6. Output Validation (Output Guardrail)  
-- The generated response is **validated** by Gemini 1.5 Pro for:  
+- The generated response is **validated** by Gemini 2.5 Flash for:  
   - Mathematical correctness  
   - Completeness  
   - Logical clarity  
@@ -57,3 +62,48 @@ The system guarantees **safe, accurate, and domain-specific reasoning**, particu
 To run the app locally:  
 ```bash
 pip install -r requirements.txt
+```
+
+## Running the Application
+
+After installing the dependencies, you can start the backend and frontend as follows:
+
+### 1. Start the FastAPI Backend
+```bash
+uvicorn main:app --reload
+```
+This will launch the API server at [http://127.0.0.1:8000](http://127.0.0.1:8000).
+
+### 2. Start the Streamlit Frontend
+```bash
+streamlit run streamlit/app.py
+```
+This will open the interactive Math Agent UI in your browser.
+
+---
+**Note:**  
+- Make sure both the backend and frontend are running for full functionality.
+- The default configuration assumes both run on your local machine.
+
+## Deployment
+
+To deploy the Agentic RAG: Math Agent, you can use Docker to containerize the application. Here are the steps:
+
+1. **Build the Docker Image**
+   ```bash
+   docker build -t math-agent .
+   ```
+
+2. **Run the Docker Container**
+   ```bash
+   docker run -p 8000:8000 math-agent
+   ```
+
+3. **Access the Application**
+   Open your browser and go to [http://127.0.0.1:8000](http://127.0.0.1:8000) to access the API, and [http://127.0.0.1:8501](http://127.0.0.1:8501) for the Streamlit UI.
+
+## License
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## Conclusion
+The Agentic RAG: Math Agent provides a robust framework for interactive math problem solving, leveraging advanced AI techniques and human feedback to continuously improve its performance. By following the setup instructions, you can deploy the system locally and start exploring its capabilities.
