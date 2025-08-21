@@ -85,22 +85,56 @@ This will open the interactive Math Agent UI in your browser.
 - Make sure both the backend and frontend are running for full functionality.
 - The default configuration assumes both run on your local machine.
 
-## Deployment
+## Cloud Deployment
+To deploy the application on Azure, we build a Docker image and push the image to Azure Container Registry (ACR) and then run the image in a Azure Container Instance (ACI).
+### 0. start.sh
+- This script is used to start the FastAPI and Streamlit applications concurrently. It ensures that both services are running and accessible.
+- Create a Dockerfile in the project root directory.
+- Create a docker-compose.yml file to manage the services.
 
-To deploy the Agentic RAG: Math Agent, you can use Docker to containerize the application. Here are the steps:
-
-1. **Build the Docker Image**
-   ```bash
-   docker build -t math-agent .
-   ```
-
-2. **Run the Docker Container**
-   ```bash
-   docker run -p 8000:8000 -p 8501:8501 math-agent
-   ```
-
-3. **Access the Application**
-   Open your browser and go to [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs) to access the API documentation, and [http://127.0.0.1:8501](http://127.0.0.1:8501) for the Streamlit UI.
+### 1. Build the Docker Image
+```bash
+docker build -t myacrmathagent.azurecr.io/myapp:latest .
+```
+### 2. Create a Resource Group
+```bash
+az group create --name myResourceGroup --location eastus
+```
+### 3. Create an Azure Container Registry
+```bash
+az acr create --resource-group myResourceGroup --name myacrmathagent --sku Basic --admin-enabled true
+```
+### 4. Login to Azure Container Registry
+```bash
+az acr login --name myacrmathagent
+```
+### 5. Push the Docker Image to Azure Container Registry
+```bash
+docker push myacrmathagent.azurecr.io/myapp:latest
+```
+### 6. Create Azure Container Instance
+```bash
+az container create --resource-group myResourceGroup --name myContainer --image myacrmathagent.azurecr.io/myapp:latest --registry-login-server myacrmathagent.azurecr.io --registry-username <your-username> --registry-password <your-password> --os-type Linux --ports 8000 8501 --cpu 4 --memory 8 --environment-variables OPENAI_API_KEY=your_openai_api_key TAVILY_API_KEY=your_tavily_api_key --dns-name-label mathagent --ip-address public
+```
+### 7. Get the IP and DNS
+```bash
+az container show --resource-group myResourceGroup --name myContainer --query "{IP: ipAddress.ip, DNS:ipAddress.fqdn}" -o table
+```
+### 8. Access the Application
+* FastAPI API: `http://<your-public-ip>:8000/docs`
+* Streamlit UI: `http://<your-public-ip>:8501`
+### 9. Stop the Application
+```bash
+az container stop --resource-group myResourceGroup --name myContainer
+```
+### 10. Delete the Container
+```bash
+az container delete --resource-group myResourceGroup --name myContainer --yes
+```
+### 11. Delete the Resource Group
+```bash
+az group delete --name myResourceGroup --yes --no-wait
+```
 
 ## License
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
